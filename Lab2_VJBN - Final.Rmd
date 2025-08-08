@@ -1,0 +1,262 @@
+---
+title: "Economic Stress & Mental Health: A Descriptive Analysis using CDC Behavioural Risk Factor Surveillance Data"
+date: "August 2024"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+# Introduction
+
+Mental health, with its rise in awareness and diagnosis, has become more prominent over the past decade, and remains as a prevalent topic of dynamic and evolving discussion. While performing routine tasks and daily activities, some individuals may have continuous feelings of distress, and others may experience similar psychological uneasiness, but periodically. Given the multitude of reasons causing mental health concerns, this research aims to delve deeper into the idea of economic stress as a cause of degrading mental health. This study plans on identifying the relationship between income level and the amount of poor mental health days reported. Our analysis also intends to look at background variables associated with income level, such as employment type and marital status, to understand if these have any correlation with one’s emotional state of being. Understanding this joint distribution is valuable for public health and economics. If lower income is associated with more poor mental health days, descriptive evidence can inform resource allocation, screening, and prevention. The CDC collects self-reported health measures on large samples, making it appropriate for descriptive modeling. Overall, with the insights collected from this research study, various institutions and organizations may potentially leverage the results to understand how to better provide mental health resources and benefits to ensure individuals have better mental health days on average. As a result, it is important that we consider this research with the respect and earnestness that it requires in order to accommodate for better mental health among the public.
+
+## Description of Data Source
+
+The primary dataset we will be using in this study is from the US Center for Disease Control and Prevention, specifically the Behavioural Risk Factor Surveillance system. This dataset is specific to the year of 2023 and is part of the annual survey that takes place (known as the BFRSS Survey) where data is collected from both landline and cell-phone based respondents residing in all the states and territories in the United States. The total number of records within this dataset is about 433,323 records, and each record is individual to a unique respondents’ answers for the telephone based survey conducted. Out of this extensive list of data variables in this dataset, for our specific analysis, we will be looking at the mental health variable, and other variables such as income level, employment status, and marital status, which we intend to find a relationship with mental health. Additionally, this survey includes health surveillance data for the adult population within the U.S. (which includes persons over the age of 18) and accounts for data that recognizes health-related conditions, risk behaviors, accessibility to the public and their use of all health-care based resources.
+
+## Data Wrangling/Data Operationalization
+
+To ensure a modern and legible analysis, the data wrangling process follows a reproducible pipeline, transforming the raw data into a clean, analysis-ready format. For all variables, “BLANK” values represent missing or blank data for all variables and will be removed from the data-set, along with variables that indicate a refusal to answer or an ambiguous “not sure” based on the methods stated below. The first step involves re-coding key variables to handle special codes used in the BRFSS survey. \### Predicted “Y” variables: In the data codebook, an individual’s mental health is captured by the variable “MENTHLTH”, which is a continuous variable from 1-30 that captures how many days out of the past 30 that an individual has felt stress, depression, or problems with emotions, with a special value of “88” for none. Values of “77” and “99” represent “not sure” and “refused” respectively MENTHLTH as well as INCOME3 below variables and are re-coded as NA to ensure they are properly excluded from calculations. This process ensures that the variables accurately reflect their intended measurements. \### Dependent “X” variables: A crucial wrangling step is the operationalization of the primary predictor, annual household income, represented by INCOME3. Variables 1 to 10 divide different income brackets of \$0 to \$200K, and an “11” for any income exceeding \$200K. The INCOME3 variable is supplemented by creating a numeric variable, income_mid, which represents the midpoint of each income bracket (e.g., parsing "\$62,500" into the number 62500). This transformation allows income to be used as a continuous variable in regression models, enabling a more detailed description of its relationship with mental health. Furthermore, a binary income_group_75k variable is created to categorize respondents into "High" or "Low" income groups relative to a \$75,000 threshold, which facilitates clear, high-level comparisons and visualizations. An individual’s employment is also highly related to their income and also a major potential factor affecting their mental health. This dataset contains variable “EMPLOY1”, which is a categorical variable that depicts different types of employment and unemployment, such as being employed, unemployed for less than or over a year, being a student, etc. Another key variable of interest is marital status (MARITAL), a categorical variable that splits an individual into the following buckets: married, divorced, widowed, separated, never married, or part of an unmarried couple. Finally, following best practices for descriptive modeling, the cleaned dataset is split into an exploration set (30%) and a confirmation set (70%). All initial data exploration, visualization, and model specification choices, including variable transformations and outlier handling are performed exclusively on the exploration set. Once the analytical plan is finalized, the models and summaries are re-calculated on the untouched confirmation set to generate the final reported results. This disciplined workflow prevents overfitting and ensures that the conclusions are based on a fair and unbiased assessment of the data patterns
+
+```{r Reading Data, echo = FALSE}
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(scales)
+library(readr)
+library(haven)
+brfss <- read_xpt("LLCP2023.XPT")%>% 
+  clean_names()
+nrow(brfss) # count number of rows of data to facilitate data wrangling comparison
+```
+
+```{r data wrangling, echo = FALSE}
+df <- brfss %>%
+  select(state, menthlth, income3, ladult1, exerany2, marital, educa, veteran3, employ1) %>%
+  mutate(
+    # BRFSS conventions: 88="None", 77/99=DK/Refused -> NA
+    menthlth = dplyr::case_when(
+      menthlth == 88 ~ 0,
+      menthlth %in% c(77, 99) ~ NA_real_,
+      TRUE ~ pmin(pmax(menthlth, 0), 30)
+    ),
+    # human-readable income labels and numeric midpoint
+    income3_label = dplyr::case_when(
+      income3 == 1 ~ "$10,000",
+      income3 == 2 ~ "$12,500",
+      income3 == 3 ~ "$17,500",
+      income3 == 4 ~ "$22,500",
+      income3 == 5 ~ "$30,000",
+      income3 == 6 ~ "$40,000",
+      income3 == 7 ~ "$62,500",
+      income3 == 8 ~ "$87,500",
+      income3 == 9 ~ "$125,000",
+      income3 == 10 ~ "$175,000",
+      income3 == 11 ~ "$200,000",
+      income3 %in% c(77, 99) ~ NA_character_,
+      is.na(income3) ~ NA_character_,
+      TRUE ~ NA_character_
+    ),
+    income_mid = readr::parse_number(income3_label) * 1000, # turn "$12,500" into 12500
+    employ_type = dplyr::case_when(
+      employ1 == 1 ~ "Employeed for Wages",
+      employ1 == 2 ~ "Self-emplyed",
+      employ1 == 3 ~ "Out of work for 1 year",
+      employ1 == 4 ~ "Out of work for less than 1 year",
+      employ1 == 5 ~ "A homemaker",
+      employ1 == 6 ~ "A student",
+      employ1 == 7 ~ "Retired",
+      employ1 == 8 ~ "Unable to work",
+      employ1 == 9 ~ NA_character_,
+      is.na(employ1) ~ NA_character_,
+      TRUE ~ NA_character_
+    )
+  )
+```
+
+```{r Data Filtering continued, echo = FALSE}
+parse_money <- function(x) {
+  x <- as.character(x)
+  as.numeric(gsub("[\\$,]", "", x))
+}
+
+df <- df %>%
+  mutate(
+    # Defensive handling of MENTHLTH
+    menthlth = case_when(
+      menthlth %in% c(88) ~ 0,              # "None"
+      menthlth %in% c(77, 99) ~ NA_real_,   # DK/Refused
+      menthlth < 0 ~ NA_real_,
+      TRUE ~ pmin(pmax(menthlth, 0), 30)    # within 0..30
+    ),
+    # Income midpoint (numeric) from labels if available
+    income_mid = parse_money(income3_label),
+    # Code unknown/refused income as NA
+    income_mid = if_else(income3 %in% c(77, 99), NA_real_, income_mid),
+    # High/Low group relative to $75k
+    income_group_75k = case_when(
+      !is.na(income_mid) & income_mid >= 75000 ~ "High (≥ $75k)",
+      !is.na(income_mid) & income_mid < 75000  ~ "Low (< $75k)",
+      TRUE ~ NA_character_
+    ) %>% factor(levels = c("Low (< $75k)", "High (≥ $75k)"))
+  )
+
+# Keep essential analysis variables
+vars_keep <- c("_state","menthlth","income3","income3_label","income_mid",
+               "educa","marital","employ1","employ_type","exerany2","veteran3","ladult1","income_group_75k")
+# df <- df %>% select(any_of(vars_keep))
+
+summary(df$menthlth)
+summary(df$employ1)
+summary(df$employ1)
+```
+
+```{r Data split for exploration and fitting, echo = FALSE}
+library(rsample)
+set.seed(203)
+split_obj <- initial_split(df %>% drop_na(menthlth, income_mid), prop = 0.30, strata = income_group_75k)
+df_explore <- training(split_obj)      # 30%
+df_confirm <- testing(split_obj)
+nrow(df_explore); nrow(df_confirm)
+```
+
+#### Data Visualization
+
+```{r, echo = FALSE}
+library(GGally)
+library(tidyr)
+library(dplyr)
+corr_df <- df_explore %>%
+ transmute(
+   menthlth,
+   income_mid,
+   educa = as.numeric(factor(educa)),
+   marital = as.numeric(factor(marital)),
+   employ1 = as.numeric(factor(employ1)),
+   exerany2 = as.numeric(factor(exerany2)),
+   veteran3 = as.numeric(factor(veteran3)),
+   ladult1
+ ) %>%
+ drop_na()
+GGally::ggcorr(corr_df, label = TRUE, label_size = 3, layout.exp = 1, hjust = 0.9) + ggtitle("Correlation Matrix Heatmap (Exploration)")
+ 
+```
+
+## Model Specification
+
+In line with the assignment's goal of description, we specified three distinct regression models to investigate the relationship between household income and mental health. The first is the simplest credible model, specified as MENTHLTH \~ income_mid, which provides a single, interpretable coefficient representing the average linear relationship between our primary X and Y variables. This model's main purpose is to formally test the null hypothesis that there is no overall relationship between income and poor mental health days. A secondary model was chosen with additional variables of employment status (employ1) and marital status (marital) as they were two factors of interest. Employment is a factor that most directly affects one's income, and marital status was chosen as it has a lower correlation with income and employment, which ensures lack of multicollinearity. It is also socially accepted that a marriage status may have an influence on mental health. The last, richest model was developed to more closely describe the shape of this relationship and investigate how the story adapts when conditioning on other important factors. This specification, MENTHLTH \~ log1p(income_mid) + poly(income_mid, 2) + factor(educa) + factor(marital) + factor(employ1) + ..., adds key covariates and transformations to provide deeper, more human-understandable insight into the data's underlying patterns. For the richest model, the choice of variable transformations was driven by our exploratory analysis, which suggested a nonlinear relationship between income and mental health. To better capture this shape, we included both a logarithmic term (log1p(income_mid)) to account for the diminishing association at higher income levels and a quadratic term (poly(income_mid, 2)) to model the curvature. This approach moves beyond a simple linear summary to more accurately represent the joint distribution of the variables. All modeling decisions, including the selection of these transformations and covariates, were made using the 30% exploration dataset to build our specification. The final, chosen models were then refitted on the 70% confirmation dataset, and the results are presented in a single, formatted regression table using the modelsummary package for clarity and professional presentation, as required.
+
+```{r echo=FALSE}
+vars_needed <- c("menthlth", "income_mid", "educa", "marital", "employ1",
+                 "exerany2", "veteran3", "ladult1", "employ_type")
+df_common <- df_confirm[complete.cases(df_confirm[, vars_needed]), ]
+m1_same <- lm(menthlth ~ income_mid, data = df_common)
+#
+# model2fit_same <- lm(menthlth ~ income_mid + factor(employ_type), data = df_common)
+model2_same <- lm(menthlth ~ income_mid + factor(employ1) + factor(marital),
+                  data = df_common)
+model3big_same <- lm(menthlth ~ log1p(income_mid) + poly(income_mid, 2, raw = TRUE) +
+                       factor(educa) + factor(marital) + factor(employ1) +
+                       factor(exerany2) + factor(veteran3) + ladult1,
+                     data = df_common)
+anova(m1_same, model2_same, model3big_same)
+```
+
+```{r, results='asis', echo=FALSE, warning=FALSE, message=FALSE}
+library(stargazer)
+library(sandwich)
+library(lmtest)
+
+# Calculate robust standard errors
+robust_se1 <- sqrt(diag(vcovHC(m1_same, type="HC1")))
+robust_se2 <- sqrt(diag(vcovHC(model2_same, type="HC1")))
+robust_se3 <- sqrt(diag(vcovHC(model3big_same, type="HC1")))
+
+# Generate the compact LaTeX table, omitting factor levels
+stargazer(m1_same, model2_same, model3big_same,
+          se = list(robust_se1, robust_se2, robust_se3), 
+          title = "Regression Model Results",
+          type = "latex",
+          header = FALSE,
+          font.size = "small",
+          column.sep.width = "-5pt",
+          no.space = TRUE,
+          df = FALSE,
+          
+          # --- This is the key new argument ---
+          # Omit variables that start with "factor(educa)", "factor(marital)", etc.
+          omit = c("factor\\(educa\\)", "factor\\(marital\\)", "factor\\(employ1\\)", 
+                  "factor\\(exerany2\\)", "factor\\(veteran3\\)"),
+          
+          # Optional: Add a note explaining that controls were included
+          add.lines = list(c("Demographic Controls", "No", "Yes", "Yes")))
+```
+
+## Model Assumptions
+
+A thorough assessment of the Large Sample Model assumptions is essential to ensure the reliability of our descriptive regression analysis. For this study, given the large sample size afforded by the BRFSS data, we evaluate the key assumptions supporting the credibility of our model's estimates. These include the linearity of data, independence and identical distribution of observations, and having a unique BLP (no perfect multicollinearity). While large samples provide some robustness to violations of certain assumptions, a careful diagnostic process is still required to understand any potential limitations of the analysis.
+
+The evaluation of the model's diagnostic plots reveals a generally well-specified model, though with some common imperfections found in real-world data. The IID assumption for this data can be considered to be met, since the data is collected nationally, and in somewhat of a random nature, there seem to be no heavy clusters or dependencies within the dataset. The linearity assumption is reasonably satisfied, largely due to the inclusion of logarithmic and polynomial transformations for the income variable, which were chosen to capture the nonlinear shape of the relationship observed in the exploratory analysis. Finally, an examination of the Variance Inflation Factor (VIF) scores reveals no issues with multicollinearity, as all values are well below the common threshold of 5, indicating that the predictors are not redundant. The coefficient estimates in our OLS model remain unbiased and consistent even in the presence of heteroskedasticity. To address the incorrect standard errors caused by this issue, we can rely on robust standard errors (such as HC3) for accurate statistical inference. Given that the primary goal of this report is description—to understand the shape and nature of the relationship between income and mental health—the model is fit for purpose. The findings provide a credible and insightful summary of the statistical patterns in the data, even with these slight deviations from the ideal Large Sample Model assumptions.
+
+```{r, echo = FALSE}
+car::vif(model3big_same)
+```
+
+## Model Results and Interpretation
+
+The results from our regression models provide a clear and statistically significant answer to our research question. The simplest credible model, which regresses the number of poor mental health days on the numeric income midpoint, reveals a strong negative relationship. The coefficient for income is statistically significant (p \< .001), indicating that as household income increases, the number of reported poor mental health days decreases on average. For every \$10,000 increase in annual household income, the model predicts a small but consistent decrease in the number of poor mental health days. This initial finding confirms the core hypothesis: economic well-being is, on average, directly associated with better mental health outcomes in this dataset. The ANOVA results indicate that expanding the model from income alone (Model 1) to include both employment type and marital status (Model 2) produces a substantial improvement in fit: the RSS drops from 2,404,639 to 2,279,776 and an F-statistic of 224.32 (p \< 2.2×10⁻¹⁶). This suggests that these sociodemographic variables contribute significantly to explaining variation in reported mental health days. Moving from Model 2 to the more comprehensive Model 3, which adds educational attainment, employment status, exercise behavior, veteran status, household adult count, and nonlinear terms for income, yields a further reduction in residual error (RSS declines from 2,279,776 to 2,254,459) with an F-statistic of 33.35 (p \< 2.2×10⁻¹⁶). Although statistically significant, this latter improvement is smaller in magnitude compared to the jump from Model 1 to Model 2, indicating that the bulk of explanatory power comes from adding employment type and marital status, with additional variables refining but not transforming the model’s predictive capacity. Our last descriptive model reinforces and deepens this initial finding. After controlling for other key demographic factors, including education, marital status, employment, and veteran status, the negative relationship between income and poor mental health remains robust and highly significant. This suggests that the income effect is not merely an artifact of other life circumstances. Notably, this richer model reveals that certain factors have an even stronger association with mental health than income alone; for instance, being "Unable to work" is associated with the largest increase in poor mental health days. The substantial increase in the model's Adjusted R-squared value from the simple to the richer model indicates that these additional variables provide a much fuller and more accurate description of the factors related to mental health.
+
+## Overall Effect
+
+Interpreting the practical significance of these results highlights the tangible connection between economic stress and mental well-being. Since the magnitude of the the income coefficient is negative for the overall mental health outcome, a negative relationship presents the practical significance for this model.Using our final model to predict outcomes for hypothetical individuals reveals the magnitude of this effect. For example, a person in the lowest income bracket is predicted to experience several more days of poor mental health per month compared to an otherwise similar person (of the same age, education, and marital status) in the highest income bracket. This stark difference underscores the profound descriptive relationship between financial hardship and mental distress, providing compelling evidence that can inform public health and policy discussions.
+
+# Appendix
+
+Histograms and boxplots of the distributions of poor mental health days and income categories for exploratory data analysis. These visualizations help to understand the underlying distributions and relationships in the data before fitting the models.
+```{r eda-distributions, fig.height=4}
+library(ggplot2)
+library(patchwork)
+
+p1 <- ggplot(df_explore, aes(x = menthlth)) + #Histogram of poor mental health days for exploratory data
+  geom_histogram(bins = 31) +
+  labs(title = "Hist Distribution",
+       x = "Days in last 30", y = "Count", font.size = 9)
+
+p2 <- df_explore %>%
+  filter(!is.na(income_mid)) %>%
+  ggplot(aes(x = fct_reorder(income3_label, income_mid), y = menthlth)) + #Boxplot of poor mental health days by income category without outliers
+  geom_boxplot(outlier.alpha = 0.2) +
+  coord_flip() +
+  labs(title = "Income vs Mental Health Days",
+       x = "Income (midpoint)", y = "Poor mental health days",font.size = 9)
+
+p1 | p2
+```
+
+## Additional Visualization
+plots to visualize the relationship between income and mental health days, including violin plots, ridgeline densities, and average poor mental health days by income group. These visualizations provide further insights into the distribution of poor mental health days across different income categories.
+
+```{r more-plots, fig.height=5}
+library(ggridges)
+
+dr1 <- ggplot(df_confirm, aes(x = income_group_75k, y = menthlth)) +
+  geom_violin(trim = TRUE, fill = "grey80", color = "red") +
+  geom_boxplot(width = 0.2, outlier.alpha = 0.1, outlier.color = "blue") +
+  labs(title = "Violin and Box Plot", x = "Income group", y = "Days of poor health",font.size = 8)
+
+dr2 <- df_confirm %>%
+  filter(!is.na(income_group_75k)) %>%
+  ggplot(aes(x = menthlth, y = income_group_75k, height = ..density..)) +
+  geom_density_ridges(stat = "density", scale = 0.9, rel_min_height = 0.01) +
+  labs(title = "Ridgeline Densities", x = "Days", y = "", font.size = 8)
+
+dr3 <- df_confirm %>%
+  filter(!is.na(income_group_75k)) %>%
+  group_by(income_group_75k) %>%
+  summarise(mean_days = mean(menthlth, na.rm = TRUE)) %>%
+  ggplot(aes(x = income_group_75k, y = mean_days)) +
+  geom_col() +
+  labs(title = "Bar Graph", x = "", y = "Mean days per 10K", font.size = 8)
+
+dr1 | dr2 | dr3
+```
